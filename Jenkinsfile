@@ -3,7 +3,7 @@ pipeline {
 
     environment {
         APP_HOST   = "ubuntu@13.206.96.102"
-        APP_IP     = "13.206.96.102"
+        APP_IP     = "13.235.134.95"
         DEPLOY_DIR = "/home/ubuntu/todoapp"
         COMPOSE    = "docker compose -p mytodoapp"   // use 'docker compose' if v2
     }

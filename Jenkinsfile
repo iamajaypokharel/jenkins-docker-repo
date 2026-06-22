@@ -7,6 +7,9 @@ pipeline {
         DEPLOY_DIR = "/home/ubuntu/todoapp"
         COMPOSE    = "docker compose -p mytodoapp"   // use 'docker compose' if v2
     }
+    // Add this triggers block to listen for git webhooks
+    triggers {
+        githubPush() // Use upstream() or gitlab() if not using GitHub
 
     stages {
         stage('Checkout') {

@@ -32,7 +32,7 @@ pipeline {
                 sshagent(['app-server-ssh']) {
                     sh '''
                         ssh -o StrictHostKeyChecking=no ${APP_HOST} "mkdir -p ${DEPLOY_DIR}"
-                        rsync -az --delete --exclude venv --exclude .git \
+                        rsync -az --delete --exclude venv --exclude .git --exclude 'postgres_data'\
                             -e "ssh -o StrictHostKeyChecking=no" \
                             ./ ${APP_HOST}:${DEPLOY_DIR}/
                     '''

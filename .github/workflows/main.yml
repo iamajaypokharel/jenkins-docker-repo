@@ -49,6 +49,7 @@ jobs:
         run: |
           ssh ubuntu@${APP_HOST} "
             cd ${DEPLOY_DIR} &&
+            chmod -R 755 frontend &&
             ${COMPOSE} up --build -d &&
             ${COMPOSE} ps
           "

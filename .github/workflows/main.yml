@@ -1,97 +1,69 @@
 name: Deploy Todo App
 
-# Trigger pipeline on every push to main branch
 on:
   push:
-    branches: ["main"]
-
-# Global environment variables (from GitHub Secrets)
+    branches: [ "main" ] # Triggers on push like githubPush()
+ 
 env:
-  APP_HOST: ${{ secrets.APP_HOST }}      # e.g. ubuntu@1.2.3.4
-  APP_IP: ${{ secrets.APP_IP }}          # e.g. 1.2.3.4 (used for curl test)
-  DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}  # e.g. /home/ubuntu/todo-app
-  COMPOSE: ${{ secrets.COMPOSE }}        # e.g. docker compose or docker-compose
+  APP_HOST: ${{ secrets.APP_HOST }}
+  APP_IP: ${{ secrets.APP_IP }}
+  DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
+  COMPOSE: ${{ secrets.COMPOSE }}
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      # STEP 1: Get source code from GitHub repo
-      - name: Checkout Code
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      # STEP 2: Basic backend test (Python compile check)
-      # This ensures there are no syntax errors before deployment
-      - name: Test Backend (Python Compile Check)
+      - name: Test (backend)
         run: |
           cd backend
           python3 -m py_compile $(find src -name "*.py")
 
-      # STEP 3: Load SSH private key securely from GitHub Secrets
-      - name: Setup SSH Key
+      - name: Configure SSH Key
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.APP_SERVER_SSH_KEY }}
 
-      # STEP 4: Add server to known hosts (prevents SSH prompt failure)
-      # IMPORTANT: uses APP_HOST instead of hardcoded IP
-      - name: Add Server to Known Hosts
+      - name: Add Remote Host to Known Hosts
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H ${APP_HOST#*@} >> ~/.ssh/known_hosts
+          ssh-keyscan -H "${APP_IP}" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "${APP_HOST}" >> ~/.ssh/known_hosts
 
-      # STEP 5: Create deployment directory on server
-      - name: Prepare Remote Server Directory
+      - name: Copy project files
         run: |
-          ssh ${APP_HOST} "mkdir -p ${DEPLOY_DIR}"
+          ssh ubuntu@${APP_HOST} "mkdir -p ${DEPLOY_DIR}"
+          rsync -az --delete --exclude venv --exclude .git ./ ubuntu@${APP_HOST}:${DEPLOY_DIR}/
 
-      # STEP 6: Sync project files to server using rsync
-      # Excludes unnecessary files like venv and git history
-      - name: Sync Project Files to Server
-        run: |
-          rsync -az --delete \
-            --exclude venv \
-            --exclude .git \
-            ./ ${APP_HOST}:${DEPLOY_DIR}/
-
-      # STEP 7: Copy environment variables file securely
-      - name: Upload Environment File (.env)
+      - name: Deploy .env file
         run: |
           echo "${{ secrets.TODO_ENV }}" > .env
-          scp .env ${APP_HOST}:${DEPLOY_DIR}/.env
+          scp .env ubuntu@${APP_HOST}:${DEPLOY_DIR}/.env
           rm .env
 
-      # STEP 8: Start / restart Docker containers on server
-      - name: Deploy with Docker Compose
+      - name: Restart Docker Compose Services
         run: |
-          ssh ${APP_HOST} "
+          ssh ubuntu@${APP_HOST} "
             cd ${DEPLOY_DIR} &&
-            ${COMPOSE} up -d --build &&
+            ${COMPOSE} up --build -d &&
             ${COMPOSE} ps
           "
 
-      # STEP 9: Wait and check if app is actually running
-      - name: Smoke Test (Basic Health Check)
+      - name: Smoke test
         run: |
-          echo "Waiting for app to start..."
           sleep 20
-
           code=$(curl -s -o /dev/null -w "%{http_code}" http://${APP_IP}:8080/)
-          echo "Response code: $code"
+          echo "Homepage returned HTTP $code"
+          test "$code" = "200"
 
-          # Fail pipeline if app is not reachable
-          if [ "$code" != "200" ]; then
-            echo "❌ App is not working"
-            exit 1
-          fi
-
-      # STEP 10: Success message
-      - name: Deployment Success
+      - name: Notify Success
         if: success()
-        run: echo "✅ Deployment successful! App running at http://${APP_IP}:8080/"
+        run: echo "Deployed. App live at http://${APP_IP}:8080/"
 
-      # STEP 11: Failure message
-      - name: Deployment Failed
+      - name: Notify Failure
         if: failure()
-        run: echo "❌ Deployment failed. Check logs above."
+        run: echo "Failed — check the stage logs above"

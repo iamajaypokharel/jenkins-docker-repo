@@ -37,7 +37,8 @@ services:
     ports:
       - "5001:5001"
     volumes:
-      - ./frontend:/app/frontend
+      - ./.env:/app/.env
+      - ./frontend:/app/frontend # <--- This gives Flask the recipes
     networks:
       - todo_app_network
 

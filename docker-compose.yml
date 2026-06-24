@@ -11,21 +11,29 @@ services:
       - postgres_data:/var/lib/postgresql/data
     networks:
       - todo_network
+    # Highlight: Added healthcheck to verify Postgres is ready
+    healthcheck:
+      test: ["CMD-SHELL", "pg_isready -U $$POSTGRES_USER -d $$POSTGRES_DB"]
+      interval: 5s
+      timeout: 5s
+      retries: 5
 
   backend:
     build: ./backend
     restart: always
     ports:
-      - "8080:5001"  # <--- This tells Flask to show up directly on port 8080!
+      - "8080:5001"
     environment:
       - DB_HOST=database
       - DB_USER=${DB_USER}
       - DB_PASSWORD=${DB_PASSWORD}
       - DB_NAME=${DB_NAME}
     volumes:
-      - ./frontend:/app/frontend  # Allows Flask to see your templates folder
+      - ./frontend:/app/frontend
+    # Highlight: Tells Docker to wait until the database is healthy
     depends_on:
-      - database
+      database:
+        condition: service_healthy
     networks:
       - todo_network
 

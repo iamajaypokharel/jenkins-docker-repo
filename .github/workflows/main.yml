@@ -1,68 +1,97 @@
 name: Deploy Todo App
 
+# Trigger pipeline on every push to main branch
 on:
   push:
-    branches: [ "main" ] # Triggers on push like githubPush()
- 
+    branches: ["main"]
+
+# Global environment variables (from GitHub Secrets)
 env:
-  APP_HOST: ${{ secrets.APP_HOST }}
-  APP_IP: ${{ secrets.APP_IP }}
-  DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
-  COMPOSE: ${{ secrets.COMPOSE }}
+  APP_HOST: ${{ secrets.APP_HOST }}      # e.g. ubuntu@1.2.3.4
+  APP_IP: ${{ secrets.APP_IP }}          # e.g. 1.2.3.4 (used for curl test)
+  DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}  # e.g. /home/ubuntu/todo-app
+  COMPOSE: ${{ secrets.COMPOSE }}        # e.g. docker compose or docker-compose
 
 jobs:
   build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      # STEP 1: Get source code from GitHub repo
+      - name: Checkout Code
         uses: actions/checkout@v4
 
-      - name: Test (backend)
+      # STEP 2: Basic backend test (Python compile check)
+      # This ensures there are no syntax errors before deployment
+      - name: Test Backend (Python Compile Check)
         run: |
           cd backend
           python3 -m py_compile $(find src -name "*.py")
 
-      - name: Configure SSH Key
+      # STEP 3: Load SSH private key securely from GitHub Secrets
+      - name: Setup SSH Key
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.APP_SERVER_SSH_KEY }}
 
-      - name: Add Remote Host to Known Hosts
+      # STEP 4: Add server to known hosts (prevents SSH prompt failure)
+      # IMPORTANT: uses APP_HOST instead of hardcoded IP
+      - name: Add Server to Known Hosts
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H 192.168.56.106 >> ~/.ssh/known_hosts
+          ssh-keyscan -H ${APP_HOST#*@} >> ~/.ssh/known_hosts
 
-      - name: Copy project files
+      # STEP 5: Create deployment directory on server
+      - name: Prepare Remote Server Directory
         run: |
           ssh ${APP_HOST} "mkdir -p ${DEPLOY_DIR}"
-          rsync -az --delete --exclude venv --exclude .git ./ ${APP_HOST}:${DEPLOY_DIR}/
 
-      - name: Deploy .env file
+      # STEP 6: Sync project files to server using rsync
+      # Excludes unnecessary files like venv and git history
+      - name: Sync Project Files to Server
+        run: |
+          rsync -az --delete \
+            --exclude venv \
+            --exclude .git \
+            ./ ${APP_HOST}:${DEPLOY_DIR}/
+
+      # STEP 7: Copy environment variables file securely
+      - name: Upload Environment File (.env)
         run: |
           echo "${{ secrets.TODO_ENV }}" > .env
           scp .env ${APP_HOST}:${DEPLOY_DIR}/.env
           rm .env
 
-      - name: Restart Docker Compose Services
+      # STEP 8: Start / restart Docker containers on server
+      - name: Deploy with Docker Compose
         run: |
           ssh ${APP_HOST} "
             cd ${DEPLOY_DIR} &&
-            ${COMPOSE} up --build -d &&
+            ${COMPOSE} up -d --build &&
             ${COMPOSE} ps
           "
 
-      - name: Smoke test
+      # STEP 9: Wait and check if app is actually running
+      - name: Smoke Test (Basic Health Check)
         run: |
+          echo "Waiting for app to start..."
           sleep 20
+
           code=$(curl -s -o /dev/null -w "%{http_code}" http://${APP_IP}:8080/)
-          echo "Homepage returned HTTP $code"
-          test "$code" = "200"
+          echo "Response code: $code"
 
-      - name: Notify Success
+          # Fail pipeline if app is not reachable
+          if [ "$code" != "200" ]; then
+            echo "❌ App is not working"
+            exit 1
+          fi
+
+      # STEP 10: Success message
+      - name: Deployment Success
         if: success()
-        run: echo "Deployed. App live at http://${APP_IP}:8080/"
+        run: echo "✅ Deployment successful! App running at http://${APP_IP}:8080/"
 
-      - name: Notify Failure
+      # STEP 11: Failure message
+      - name: Deployment Failed
         if: failure()
-        run: echo "Failed — check the stage logs above"
+        run: echo "❌ Deployment failed. Check logs above."

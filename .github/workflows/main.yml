@@ -49,6 +49,8 @@ jobs:
         run: |
           ssh ubuntu@${APP_HOST} "
             cd ${DEPLOY_DIR} &&
+            # 1. Stop everything and clear out old hidden/removed containers
+            ${COMPOSE} down --remove-orphans
             chmod -R 755 frontend &&
             ${COMPOSE} up --build -d &&
             ${COMPOSE} ps

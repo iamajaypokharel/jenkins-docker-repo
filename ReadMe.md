@@ -1,4 +1,4 @@
-# Docker Deployment Todo App Deployment End to End
+# Docker Deployment Todo App Deployment
 
 This repository contains the source code and configuration files for deploying a Todo application using Docker and Docker Compose.
 

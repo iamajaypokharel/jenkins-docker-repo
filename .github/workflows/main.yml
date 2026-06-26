@@ -2,8 +2,9 @@ name: Deploy Todo App
 
 on:
   push:
-    branches: [ "main" ] # Triggers on push like githubPush()
- 
+    branches:
+      - main
+
 env:
   APP_HOST: ${{ secrets.APP_HOST }}
   APP_IP: ${{ secrets.APP_IP }}
@@ -11,60 +12,110 @@ env:
   COMPOSE: ${{ secrets.COMPOSE }}
 
 jobs:
-  build-and-deploy:
+  deploy:
+    name: Build & Deploy
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout code
+      - name: Checkout Repository
         uses: actions/checkout@v4
 
-      - name: Test (backend)
+      ####################################################
+      # Backend Syntax Check
+      ####################################################
+      - name: Validate Python Code
         run: |
           cd backend
           python3 -m py_compile $(find src -name "*.py")
 
-      - name: Configure SSH Key
+      ####################################################
+      # Configure SSH
+      ####################################################
+      - name: Configure SSH
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.APP_SERVER_SSH_KEY }}
 
-      - name: Add Remote Host to Known Hosts
+      - name: Add EC2 to Known Hosts
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H "${APP_IP}" >> ~/.ssh/known_hosts
-          ssh-keyscan -H "${APP_HOST}" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "$APP_IP" >> ~/.ssh/known_hosts
 
-      - name: Copy project files
+      ####################################################
+      # Create Deployment Directory
+      ####################################################
+      - name: Create Deployment Directory
         run: |
-          ssh ubuntu@${APP_HOST} "mkdir -p ${DEPLOY_DIR}"
-          rsync -az --delete --exclude venv --exclude .git --exclude postgres_data ./ ubuntu@${APP_HOST}:${DEPLOY_DIR}/
+          ssh ubuntu@$APP_IP "mkdir -p $DEPLOY_DIR"
 
-      - name: Deploy .env file
+      ####################################################
+      # Copy Application Files
+      ####################################################
+      - name: Upload Project
+        run: |
+          rsync -az --delete \
+            --exclude=".git" \
+            --exclude="venv" \
+            --exclude="postgres_data" \
+            ./ ubuntu@$APP_IP:$DEPLOY_DIR/
+
+      ####################################################
+      # Upload Environment File
+      ####################################################
+      - name: Upload .env
         run: |
           echo "${{ secrets.TODO_ENV }}" > .env
-          scp .env ubuntu@${APP_HOST}:${DEPLOY_DIR}/.env
+          scp .env ubuntu@$APP_IP:$DEPLOY_DIR/.env
           rm .env
 
-      - name: Restart Docker Compose Services
+      ####################################################
+      # Deploy Docker Containers
+      ####################################################
+      - name: Deploy Application
         run: |
-          ssh ubuntu@${APP_HOST} "
-            cd ${DEPLOY_DIR} &&
-            ${COMPOSE} down --remove-orphans &&
-            ${COMPOSE} up --build -d &&
-            ${COMPOSE} ps
-          "
+          ssh ubuntu@$APP_IP << EOF
+            set -e
 
-      - name: Smoke test
+            cd $DEPLOY_DIR
+
+            $COMPOSE pull || true
+            $COMPOSE down --remove-orphans
+            $COMPOSE up -d --build
+
+            docker ps
+          EOF
+
+      ####################################################
+      # Health Check
+      ####################################################
+      - name: Health Check
         run: |
+          echo "Waiting for application..."
           sleep 20
-          code=$(curl -s -o /dev/null -w "%{http_code}" http://${APP_IP}:8080/)
-          echo "Homepage returned HTTP $code"
-          test "$code" = "200"
 
-      - name: Notify Success
+          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://$APP_IP:8080/)
+
+          echo "HTTP Status: $STATUS"
+
+          if [ "$STATUS" != "200" ]; then
+            echo "Deployment Failed!"
+            exit 1
+          fi
+
+      ####################################################
+      # Success Message
+      ####################################################
+      - name: Deployment Successful
         if: success()
-        run: echo "Deployed. App live at http://${APP_IP}:8080/"
+        run: |
+          echo "Application deployed successfully."
+          echo "Visit: http://$APP_IP:8080"
 
-      - name: Notify Failure
+      ####################################################
+      # Failure Message
+      ####################################################
+      - name: Deployment Failed
         if: failure()
-        run: echo "Failed — check the stage logs above"
+        run: |
+          echo "Deployment failed."
+          echo "Check the GitHub Actions logs."

@@ -6,116 +6,73 @@ on:
       - main
 
 env:
-  APP_HOST: ${{ secrets.APP_HOST }}
   APP_IP: ${{ secrets.APP_IP }}
   DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
   COMPOSE: ${{ secrets.COMPOSE }}
 
 jobs:
   deploy:
-    name: Build & Deploy
     runs-on: ubuntu-latest
 
     steps:
       - name: Checkout Repository
         uses: actions/checkout@v4
 
-      ####################################################
-      # Backend Syntax Check
-      ####################################################
-      - name: Validate Python Code
+      - name: Validate Backend
         run: |
           cd backend
           python3 -m py_compile $(find src -name "*.py")
 
-      ####################################################
-      # Configure SSH
-      ####################################################
       - name: Configure SSH
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.APP_SERVER_SSH_KEY }}
 
-      - name: Add EC2 to Known Hosts
+      - name: Add Host Key
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H "$APP_IP" >> ~/.ssh/known_hosts
+          ssh-keyscan -H $APP_IP >> ~/.ssh/known_hosts
 
-      ####################################################
-      # Create Deployment Directory
-      ####################################################
+      - name: Test SSH Connection
+        run: |
+          ssh -v ubuntu@$APP_IP "echo SSH Connected"
+
       - name: Create Deployment Directory
         run: |
           ssh ubuntu@$APP_IP "mkdir -p $DEPLOY_DIR"
 
-      ####################################################
-      # Copy Application Files
-      ####################################################
-      - name: Upload Project
+      - name: Copy Project
         run: |
-          rsync -az --delete \
+          rsync -avz --delete \
             --exclude=".git" \
             --exclude="venv" \
             --exclude="postgres_data" \
             ./ ubuntu@$APP_IP:$DEPLOY_DIR/
 
-      ####################################################
-      # Upload Environment File
-      ####################################################
       - name: Upload .env
         run: |
           echo "${{ secrets.TODO_ENV }}" > .env
           scp .env ubuntu@$APP_IP:$DEPLOY_DIR/.env
           rm .env
 
-      ####################################################
-      # Deploy Docker Containers
-      ####################################################
-      - name: Deploy Application
+      - name: Deploy
         run: |
-          ssh ubuntu@$APP_IP << EOF
-            set -e
-
-            cd $DEPLOY_DIR
-
-            $COMPOSE pull || true
-            $COMPOSE down --remove-orphans
-            $COMPOSE up -d --build
-
+          ssh ubuntu@$APP_IP "
+            cd $DEPLOY_DIR &&
+            $COMPOSE down --remove-orphans &&
+            $COMPOSE up -d --build &&
             docker ps
-          EOF
+          "
 
-      ####################################################
-      # Health Check
-      ####################################################
       - name: Health Check
         run: |
-          echo "Waiting for application..."
           sleep 20
+          curl -f http://$APP_IP:8080/
 
-          STATUS=$(curl -s -o /dev/null -w "%{http_code}" http://$APP_IP:8080/)
-
-          echo "HTTP Status: $STATUS"
-
-          if [ "$STATUS" != "200" ]; then
-            echo "Deployment Failed!"
-            exit 1
-          fi
-
-      ####################################################
-      # Success Message
-      ####################################################
-      - name: Deployment Successful
+      - name: Success
         if: success()
-        run: |
-          echo "Application deployed successfully."
-          echo "Visit: http://$APP_IP:8080"
+        run: echo "Deployment Successful"
 
-      ####################################################
-      # Failure Message
-      ####################################################
-      - name: Deployment Failed
+      - name: Failure
         if: failure()
-        run: |
-          echo "Deployment failed."
-          echo "Check the GitHub Actions logs."
+        run: echo "Deployment Failed"

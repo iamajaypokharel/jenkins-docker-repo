@@ -35,11 +35,11 @@ jobs:
 
       - name: Test SSH Connection
         run: |
-          ssh -v ubuntu@$APP_IP "echo SSH Connected"
+          ssh -v $APP_IP "echo SSH Connected"
 
       - name: Create Deployment Directory
         run: |
-          ssh ubuntu@$APP_IP "mkdir -p $DEPLOY_DIR"
+          ssh $APP_IP "mkdir -p $DEPLOY_DIR"
 
       - name: Copy Project
         run: |
@@ -47,17 +47,17 @@ jobs:
             --exclude=".git" \
             --exclude="venv" \
             --exclude="postgres_data" \
-            ./ ubuntu@$APP_IP:$DEPLOY_DIR/
+            ./ $APP_IP:$DEPLOY_DIR/
 
       - name: Upload .env
         run: |
           echo "${{ secrets.TODO_ENV }}" > .env
-          scp .env ubuntu@$APP_IP:$DEPLOY_DIR/.env
+          scp .env $APP_IP:$DEPLOY_DIR/.env
           rm .env
 
       - name: Deploy
         run: |
-          ssh ubuntu@$APP_IP "
+          ssh $APP_IP "
             cd $DEPLOY_DIR &&
             $COMPOSE down --remove-orphans &&
             $COMPOSE up -d --build &&

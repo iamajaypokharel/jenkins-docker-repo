@@ -2,77 +2,68 @@ name: Deploy Todo App
 
 on:
   push:
-    branches:
-      - main
-
+    branches: [ "main" ] # Triggers on push like githubPush()
+ 
 env:
+  APP_HOST: ${{ secrets.APP_HOST }}
   APP_IP: ${{ secrets.APP_IP }}
   DEPLOY_DIR: ${{ secrets.DEPLOY_DIR }}
   COMPOSE: ${{ secrets.COMPOSE }}
 
 jobs:
-  deploy:
+  build-and-deploy:
     runs-on: ubuntu-latest
 
     steps:
-      - name: Checkout Repository
+      - name: Checkout code
         uses: actions/checkout@v4
 
-      - name: Validate Backend
+      - name: Test (backend)
         run: |
           cd backend
           python3 -m py_compile $(find src -name "*.py")
 
-      - name: Configure SSH
+      - name: Configure SSH Key
         uses: webfactory/ssh-agent@v0.9.0
         with:
           ssh-private-key: ${{ secrets.APP_SERVER_SSH_KEY }}
 
-      - name: Add Host Key
+      - name: Add Remote Host to Known Hosts
         run: |
           mkdir -p ~/.ssh
-          ssh-keyscan -H $APP_IP >> ~/.ssh/known_hosts
+          ssh-keyscan -H "${APP_IP}" >> ~/.ssh/known_hosts
+          ssh-keyscan -H "${APP_HOST}" >> ~/.ssh/known_hosts
 
-      - name: Test SSH Connection
+      - name: Copy project files
         run: |
-          ssh -v $APP_IP "echo SSH Connected"
+          ssh ubuntu@${APP_HOST} "mkdir -p ${DEPLOY_DIR}"
+          rsync -az --delete --exclude venv --exclude .git ./ ubuntu@${APP_HOST}:${DEPLOY_DIR}/
 
-      - name: Create Deployment Directory
-        run: |
-          ssh $APP_IP "mkdir -p $DEPLOY_DIR"
-
-      - name: Copy Project
-        run: |
-          rsync -avz --delete \
-            --exclude=".git" \
-            --exclude="venv" \
-            --exclude="postgres_data" \
-            ./ $APP_IP:$DEPLOY_DIR/
-
-      - name: Upload .env
+      - name: Deploy .env file
         run: |
           echo "${{ secrets.TODO_ENV }}" > .env
-          scp .env $APP_IP:$DEPLOY_DIR/.env
+          scp .env ubuntu@${APP_HOST}:${DEPLOY_DIR}/.env
           rm .env
 
-      - name: Deploy
+      - name: Restart Docker Compose Services
         run: |
-          ssh $APP_IP "
-            cd $DEPLOY_DIR &&
-            $COMPOSE down --remove-orphans &&
-            $COMPOSE up -d --build &&
-            docker ps
+          ssh ubuntu@${APP_HOST} "
+            cd ${DEPLOY_DIR} &&
+            ${COMPOSE} up --build -d &&
+            ${COMPOSE} ps
           "
 
-      - name: Health Check
+      - name: Smoke test
         run: |
           sleep 20
-          curl -f http://$APP_IP:8080/
+          code=$(curl -s -o /dev/null -w "%{http_code}" http://${APP_IP}:8080/)
+          echo "Homepage returned HTTP $code"
+          test "$code" = "200"
 
-      - name: Success
+      - name: Notify Success
         if: success()
-        run: echo "Deployment Successful"
+        run: echo "Deployed. App live at http://${APP_IP}:8080/"
 
-      - name: Failure
+      - name: Notify Failure
         if: failure()
-        run: echo "Deployment Failed"
+        run: echo "Failed — check the stage logs above"
